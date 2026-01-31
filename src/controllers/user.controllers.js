@@ -61,6 +61,11 @@ exports.Login = AsyncHandler(async (req, res) => {
   const user = await User.findOne({ email: email.toLowerCase() });
   if (!user) throw new CustomError(400, "Invalid credentials");
 
+  // Check if account is active
+  if (user.status === "INACTIVE") {
+    throw new CustomError(403, "Account is deactivated. Contact admin.");
+  }
+
   // Check password
   const isMatch = await user.comparePassword(password);
   if (!isMatch) throw new CustomError(400, "Invalid credentials");
@@ -72,7 +77,7 @@ exports.Login = AsyncHandler(async (req, res) => {
   user.refreshToken = refreshToken;
   await user.save();
 
-   // SET COOKIE
+  // SET COOKIE
   res.cookie("accessToken", accessToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
@@ -99,3 +104,75 @@ exports.Login = AsyncHandler(async (req, res) => {
     },
   });
 });
+
+exports.changeUserRole = AsyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const { role } = req.body;
+
+  // Validate role
+  const allowedRoles = ["ADMIN", "MANAGER", "STAFF"];
+  if (!allowedRoles.includes(role)) {
+    throw new CustomError(400, "Invalid role");
+  }
+
+  // Prevent self role change
+  if (req.user._id.toString() === userId) {
+    throw new CustomError(403, "You cannot change your own role");
+  }
+
+  // Find user
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new CustomError(404, "User not found");
+  }
+
+  // Change role
+  user.role = role;
+  await user.save();
+
+  APIResponse.success(res, 200, "User role updated successfully", {
+    id: user._id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+  });
+});
+
+exports.changeUserStatus = async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body; // "ACTIVE" | "INACTIVE"
+
+  // validation
+  if (!["ACTIVE", "INACTIVE"].includes(status)) {
+    throw new CustomError(400, "Invalid status value");
+  }
+
+  // admin cannot deactivate himself
+  if (req.user._id.toString() === id) {
+    throw new CustomError(400, "You cannot change your own status");
+  }
+
+  const user = await User.findById(id);
+  if (!user) {
+    throw new CustomError(404, "User not found");
+  }
+
+  user.status = status;
+  await user.save();
+
+  res.status(200).json({
+    success: true,
+    message: `User status changed to ${status}`,
+  });
+};
+
+exports.getAllUsers = async (req, res) => {
+  const users = await User.find()
+    .select("-password -refreshToken");
+
+  res.status(200).json({
+    success: true,
+    count: users.length,
+    data: users,
+  });
+};
